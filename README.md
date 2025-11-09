@@ -6,8 +6,23 @@ Repository for storing source code for netology diploma project for EEG-Image cl
 
 ## Установка
 
+**Важно:** На Ubuntu 22.04+ необходимо использовать виртуальное окружение.
+
 ```bash
+# Создание виртуального окружения
+python3 -m venv eeg_env
+
+# Активация виртуального окружения
+source eeg_env/bin/activate
+
+# Установка зависимостей
+pip install --upgrade pip
 pip install -r requirements.txt
+```
+
+**Для деактивации виртуального окружения:**
+```bash
+deactivate
 ```
 
 ## Структура данных
