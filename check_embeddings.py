@@ -7,21 +7,54 @@ import torch
 from torch.utils.data import DataLoader
 from pathlib import Path
 import numpy as np
+import argparse
+import json
 
 from eegclip.data import ThingsEEGDataset, create_subject_splits, collate_fn
 from eegclip.models import EEGCLIPModel
-from eegclip.utils import load_checkpoint, get_device
+from eegclip.utils import load_checkpoint, get_device, load_config
 from eegclip.metrics import compute_retrieval_metrics
 
 
-def check_embeddings(checkpoint_path=None, data_root="data", n_classes=10):
+def check_embeddings(checkpoint_path=None, config_path=None, data_root="data", n_classes=10, device_str="cuda:0"):
     """Проверка эмбеддингов"""
     
     print("=" * 70)
     print("🔍 ПРОВЕРКА ЭМБЕДДИНГОВ МОДЕЛИ")
     print("=" * 70)
     
-    device = get_device("cpu")
+    device = get_device(device_str)
+    
+    # Загружаем конфигурацию из чекпоинта, если есть
+    config = None
+    if checkpoint_path and Path(checkpoint_path).exists():
+        config_dir = Path(checkpoint_path).parent
+        config_path = config_dir / "config.json"
+        if config_path.exists():
+            config = load_config(config_path)
+            print(f"✅ Загружена конфигурация: {config_path}")
+    
+    # Параметры модели из конфига или дефолтные
+    if config:
+        eeg_d_model = config.get('eeg_d_model', 256)
+        eeg_layers = config.get('eeg_layers', 4)
+        eeg_hidden = config.get('eeg_hidden', 512)
+        vision_encoder = config.get('vision_encoder', 'openclip_vit_b32')
+        freeze_vision = config.get('freeze_vision', True)
+        proj_dim = config.get('proj_dim', 512)
+        proj_hidden = config.get('proj_hidden', 1024)
+        dropout = config.get('dropout', 0.1)
+        temporal_pool = config.get('temporal_pool', 'cls')
+    else:
+        eeg_d_model = 256
+        eeg_layers = 4
+        eeg_hidden = 512
+        vision_encoder = 'openclip_vit_b32'
+        freeze_vision = True
+        proj_dim = 512
+        proj_hidden = 1024
+        dropout = 0.1
+        temporal_pool = 'cls'
     
     # Subject splits
     all_subjects = list(range(1, 11))
@@ -56,19 +89,20 @@ def check_embeddings(checkpoint_path=None, data_root="data", n_classes=10):
     model = EEGCLIPModel(
         n_channels=17,
         n_timepoints=100,
-        eeg_d_model=256,
-        eeg_layers=2,
-        eeg_hidden=512,
-        vision_encoder='openclip_vit_b32',
-        freeze_vision=True,
-        proj_dim=512,
-        proj_hidden=1024,
-        dropout=0.1,
-        temporal_pool='cls'
+        eeg_d_model=eeg_d_model,
+        eeg_layers=eeg_layers,
+        eeg_hidden=eeg_hidden,
+        vision_encoder=vision_encoder,
+        freeze_vision=freeze_vision,
+        proj_dim=proj_dim,
+        proj_hidden=proj_hidden,
+        dropout=dropout,
+        temporal_pool=temporal_pool
     ).to(device)
     
     # Загружаем чекпоинт, если есть
     if checkpoint_path and Path(checkpoint_path).exists():
+        print(f"📝 Загрузка чекпоинта: {checkpoint_path}")
         load_checkpoint(Path(checkpoint_path), model)
         print(f"✅ Загружен чекпоинт: {checkpoint_path}")
     else:
@@ -162,26 +196,59 @@ def check_embeddings(checkpoint_path=None, data_root="data", n_classes=10):
 
 
 if __name__ == '__main__':
-    # Проверяем модель с начальными весами
-    print("\n" + "="*70)
-    print("1. ПРОВЕРКА МОДЕЛИ С НАЧАЛЬНЫМИ ВЕСАМИ")
-    print("="*70)
-    metrics_init = check_embeddings()
+    parser = argparse.ArgumentParser(description='Check embeddings of EEG-CLIP model')
+    parser.add_argument('--checkpoint_path', type=str, default=None,
+                       help='Path to checkpoint file')
+    parser.add_argument('--config_path', type=str, default=None,
+                       help='Path to config.json (optional, auto-detected from checkpoint dir)')
+    parser.add_argument('--data_root', type=str, default='data',
+                       help='Root directory with data')
+    parser.add_argument('--n_classes', type=int, default=10,
+                       help='Number of classes')
+    parser.add_argument('--device', type=str, default='cuda:0',
+                       help='Device to use (cuda:0, cpu, etc.)')
     
-    # Проверяем обученную модель
-    checkpoint_path = "checkpoints_test/best.pt"
-    if Path(checkpoint_path).exists():
-        print("\n" + "="*70)
-        print("2. ПРОВЕРКА ОБУЧЕННОЙ МОДЕЛИ")
-        print("="*70)
-        metrics_trained = check_embeddings(checkpoint_path=checkpoint_path)
-        
-        print("\n" + "="*70)
-        print("📊 СРАВНЕНИЕ")
-        print("="*70)
-        print(f"Начальная Recall@1: {metrics_init['eeg2img_recall@1']:.4f}")
-        print(f"Обученная Recall@1: {metrics_trained['eeg2img_recall@1']:.4f}")
-        print(f"Улучшение: {metrics_trained['eeg2img_recall@1'] - metrics_init['eeg2img_recall@1']:.4f}")
+    args = parser.parse_args()
+    
+    # Если указан чекпоинт, проверяем только его
+    if args.checkpoint_path:
+        metrics = check_embeddings(
+            checkpoint_path=args.checkpoint_path,
+            config_path=args.config_path,
+            data_root=args.data_root,
+            n_classes=args.n_classes,
+            device_str=args.device
+        )
     else:
-        print(f"\n⚠️  Чекпоинт не найден: {checkpoint_path}")
+        # Проверяем модель с начальными весами
+        print("\n" + "="*70)
+        print("1. ПРОВЕРКА МОДЕЛИ С НАЧАЛЬНЫМИ ВЕСАМИ")
+        print("="*70)
+        metrics_init = check_embeddings(
+            data_root=args.data_root,
+            n_classes=args.n_classes,
+            device_str=args.device
+        )
+        
+        # Проверяем обученную модель (если есть дефолтный чекпоинт)
+        checkpoint_path = "checkpoints_test/best.pt"
+        if Path(checkpoint_path).exists():
+            print("\n" + "="*70)
+            print("2. ПРОВЕРКА ОБУЧЕННОЙ МОДЕЛИ")
+            print("="*70)
+            metrics_trained = check_embeddings(
+                checkpoint_path=checkpoint_path,
+                data_root=args.data_root,
+                n_classes=args.n_classes,
+                device_str=args.device
+            )
+            
+            print("\n" + "="*70)
+            print("📊 СРАВНЕНИЕ")
+            print("="*70)
+            print(f"Начальная Recall@1: {metrics_init['eeg2img_recall@1']:.4f}")
+            print(f"Обученная Recall@1: {metrics_trained['eeg2img_recall@1']:.4f}")
+            print(f"Улучшение: {metrics_trained['eeg2img_recall@1'] - metrics_init['eeg2img_recall@1']:.4f}")
+        else:
+            print(f"\n⚠️  Чекпоинт не найден: {checkpoint_path}")
 

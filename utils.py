@@ -90,6 +90,12 @@ def save_config(config: Dict[str, Any], save_path: Path):
         json.dump(config, f, indent=2, default=str)
 
 
+def load_config(config_path: Path) -> Dict[str, Any]:
+    """Загрузка конфигурации из JSON"""
+    with open(config_path, 'r') as f:
+        return json.load(f)
+
+
 def get_device(devices: str = '1') -> torch.device:
     """Определение устройства для обучения"""
     if devices.startswith('cuda') or (devices.isdigit() and torch.cuda.is_available()):
