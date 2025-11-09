@@ -1,11 +1,13 @@
 # EEG-CLIP: Contrastive Learning for EEG-Image Alignment
 
+Repository for storing source code for netology diploma project for EEG-Image classification model.
+
 Контрастивное обучение для сопоставления эмбеддингов EEG с эмбеддингами изображений по методу CLIP/InfoNCE.
 
 ## Установка
 
 ```bash
-pip install -r eegclip/requirements.txt
+pip install -r requirements.txt
 ```
 
 ## Структура данных
@@ -169,4 +171,3 @@ tensorboard --logdir logs
 - Используется mixed precision (AMP) для ускорения
 - Subject-wise split предотвращает data leakage
 - Поддержка возобновления обучения с чекпоинта
-
