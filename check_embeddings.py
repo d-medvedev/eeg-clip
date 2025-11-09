@@ -1,0 +1,187 @@
+#!/usr/bin/env python3
+"""
+Проверка эмбеддингов модели
+"""
+
+import torch
+from torch.utils.data import DataLoader
+from pathlib import Path
+import numpy as np
+
+from eegclip.data import ThingsEEGDataset, create_subject_splits, collate_fn
+from eegclip.models import EEGCLIPModel
+from eegclip.utils import load_checkpoint, get_device
+from eegclip.metrics import compute_retrieval_metrics
+
+
+def check_embeddings(checkpoint_path=None, data_root="data", n_classes=10):
+    """Проверка эмбеддингов"""
+    
+    print("=" * 70)
+    print("🔍 ПРОВЕРКА ЭМБЕДДИНГОВ МОДЕЛИ")
+    print("=" * 70)
+    
+    device = get_device("cpu")
+    
+    # Subject splits
+    all_subjects = list(range(1, 11))
+    subject_splits = create_subject_splits(
+        all_subjects,
+        val_ratio=0.1,
+        test_ratio=0.1,
+        seed=42
+    )
+    
+    # Датасет
+    val_dataset = ThingsEEGDataset(
+        data_root=data_root,
+        n_classes=n_classes,
+        split='val',
+        subject_splits=subject_splits,
+        eeg_len=100,
+        fs=500.0,
+        preprocess_eeg=False,
+        augment=False
+    )
+    
+    val_loader = DataLoader(
+        val_dataset,
+        batch_size=8,
+        shuffle=False,
+        num_workers=0,
+        collate_fn=collate_fn
+    )
+    
+    # Модель
+    model = EEGCLIPModel(
+        n_channels=17,
+        n_timepoints=100,
+        eeg_d_model=256,
+        eeg_layers=2,
+        eeg_hidden=512,
+        vision_encoder='openclip_vit_b32',
+        freeze_vision=True,
+        proj_dim=512,
+        proj_hidden=1024,
+        dropout=0.1,
+        temporal_pool='cls'
+    ).to(device)
+    
+    # Загружаем чекпоинт, если есть
+    if checkpoint_path and Path(checkpoint_path).exists():
+        load_checkpoint(Path(checkpoint_path), model)
+        print(f"✅ Загружен чекпоинт: {checkpoint_path}")
+    else:
+        print("📝 Используется модель с начальными весами")
+    
+    model.eval()
+    
+    # Получаем один батч
+    batch = next(iter(val_loader))
+    eeg = batch['eeg'].to(device)
+    image = batch['image'].to(device)
+    
+    print(f"\n📊 Батч:")
+    print(f"   EEG shape: {eeg.shape}")
+    print(f"   Image shape: {image.shape}")
+    print(f"   Class indices: {batch['class_idx'].tolist()}")
+    
+    # Получаем эмбеддинги
+    with torch.no_grad():
+        eeg_emb, img_emb = model(eeg, image)
+    
+    print(f"\n📊 Эмбеддинги:")
+    print(f"   EEG embeddings shape: {eeg_emb.shape}")
+    print(f"   Image embeddings shape: {img_emb.shape}")
+    
+    # Проверяем нормализацию
+    eeg_norms = torch.norm(eeg_emb, dim=1)
+    img_norms = torch.norm(img_emb, dim=1)
+    
+    print(f"\n📏 L2 нормы:")
+    print(f"   EEG norms: min={eeg_norms.min():.4f}, max={eeg_norms.max():.4f}, mean={eeg_norms.mean():.4f}")
+    print(f"   Image norms: min={img_norms.min():.4f}, max={img_norms.max():.4f}, mean={img_norms.mean():.4f}")
+    
+    # Матрица сходства
+    similarity = eeg_emb @ img_emb.T
+    print(f"\n📊 Матрица сходства:")
+    print(f"   Shape: {similarity.shape}")
+    print(f"   Диагональ (правильные пары): {torch.diag(similarity).tolist()}")
+    print(f"   Диагональ mean: {torch.diag(similarity).mean():.4f}")
+    print(f"   Диагональ std: {torch.diag(similarity).std():.4f}")
+    print(f"   Вне диагонали mean: {similarity[~torch.eye(similarity.shape[0], dtype=bool)].mean():.4f}")
+    print(f"   Вне диагонали std: {similarity[~torch.eye(similarity.shape[0], dtype=bool)].std():.4f}")
+    
+    # Проверяем, правильно ли модель различает пары
+    diag_similarity = torch.diag(similarity)
+    off_diag_mean = similarity[~torch.eye(similarity.shape[0], dtype=bool)].mean()
+    
+    print(f"\n🔍 Анализ различимости:")
+    print(f"   Среднее сходство правильных пар: {diag_similarity.mean():.4f}")
+    print(f"   Среднее сходство неправильных пар: {off_diag_mean:.4f}")
+    print(f"   Разница: {diag_similarity.mean() - off_diag_mean:.4f}")
+    
+    if diag_similarity.mean() > off_diag_mean:
+        print("   ✅ Правильные пары имеют большее сходство")
+    else:
+        print("   ❌ ПРОБЛЕМА: Правильные пары НЕ имеют большего сходства!")
+    
+    # Вычисляем метрики
+    metrics = compute_retrieval_metrics(eeg_emb, img_emb, k_list=[1, 5, 10])
+    
+    print(f"\n📈 Метрики retrieval:")
+    for key, value in metrics.items():
+        print(f"   {key}: {value:.4f}")
+    
+    # Проверяем logit_scale
+    logit_scale = model.get_logit_scale()
+    print(f"\n🌡️  Logit scale (температура):")
+    print(f"   logit_scale: {logit_scale.item():.4f}")
+    print(f"   temperature: {logit_scale.exp().item():.4f}")
+    
+    # Проверяем, как температура влияет на сходство
+    scaled_similarity = logit_scale * similarity
+    print(f"\n📊 Масштабированная матрица сходства (с температурой):")
+    print(f"   Диагональ mean: {torch.diag(scaled_similarity).mean():.4f}")
+    print(f"   Вне диагонали mean: {scaled_similarity[~torch.eye(scaled_similarity.shape[0], dtype=bool)].mean():.4f}")
+    
+    # Проверяем предсказания
+    pred_eeg2img = similarity.argmax(dim=1)
+    pred_img2eeg = similarity.argmax(dim=0)
+    labels = torch.arange(similarity.shape[0], device=device)
+    
+    eeg2img_acc = (pred_eeg2img == labels).float().mean().item()
+    img2eeg_acc = (pred_img2eeg == labels).float().mean().item()
+    
+    print(f"\n🎯 Точность предсказаний:")
+    print(f"   EEG→Image: {eeg2img_acc:.4f} ({eeg2img_acc*100:.2f}%)")
+    print(f"   Image→EEG: {img2eeg_acc:.4f} ({img2eeg_acc*100:.2f}%)")
+    print(f"   Baseline (случайное): {1.0/similarity.shape[0]:.4f} ({100.0/similarity.shape[0]:.2f}%)")
+    
+    return metrics
+
+
+if __name__ == '__main__':
+    # Проверяем модель с начальными весами
+    print("\n" + "="*70)
+    print("1. ПРОВЕРКА МОДЕЛИ С НАЧАЛЬНЫМИ ВЕСАМИ")
+    print("="*70)
+    metrics_init = check_embeddings()
+    
+    # Проверяем обученную модель
+    checkpoint_path = "checkpoints_test/best.pt"
+    if Path(checkpoint_path).exists():
+        print("\n" + "="*70)
+        print("2. ПРОВЕРКА ОБУЧЕННОЙ МОДЕЛИ")
+        print("="*70)
+        metrics_trained = check_embeddings(checkpoint_path=checkpoint_path)
+        
+        print("\n" + "="*70)
+        print("📊 СРАВНЕНИЕ")
+        print("="*70)
+        print(f"Начальная Recall@1: {metrics_init['eeg2img_recall@1']:.4f}")
+        print(f"Обученная Recall@1: {metrics_trained['eeg2img_recall@1']:.4f}")
+        print(f"Улучшение: {metrics_trained['eeg2img_recall@1'] - metrics_init['eeg2img_recall@1']:.4f}")
+    else:
+        print(f"\n⚠️  Чекпоинт не найден: {checkpoint_path}")
+

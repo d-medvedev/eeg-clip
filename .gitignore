@@ -1,0 +1,62 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+*.egg-info/
+dist/
+build/
+*.egg
+
+# Virtual environments
+eeg_env/
+venv/
+env/
+notebook_env/
+
+# Data (НЕ коммитим данные!)
+data/eeg/
+data/images/
+*.npy
+*.npz
+
+# Checkpoints и логи
+checkpoints*/
+logs*/
+*.log
+*.pt
+*.pth
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Jupyter
+.ipynb_checkpoints/
+*.ipynb
+
+# TensorBoard
+runs/
+
+# Временные файлы
+*.csv
+*.json
+!eegclip/requirements.txt
+!eegclip/README.md
+
+# Старые эксперименты
+eda/
+cursor/
+codex/
+repos/
+notebooks/
+tools/
+plots/
+
