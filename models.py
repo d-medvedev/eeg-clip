@@ -418,7 +418,13 @@ class EEGCLIPModel(nn.Module):
         """Получить температуру с клиппингом"""
         # Клиппим параметр перед exp, чтобы температура не превышала 100
         # Это эквивалентно температуре = min(exp(logit_scale), 100)
-        return self.logit_scale.clamp(max=math.log(100.0)).exp()
+        clamped = self.logit_scale.clamp(min=math.log(1/100.0), max=math.log(100.0))
+        temp = clamped.exp()
+        # Проверка на nan/inf
+        if torch.isnan(temp) or torch.isinf(temp):
+            # Возвращаем безопасное значение
+            return torch.tensor(1.0, device=temp.device, dtype=temp.dtype)
+        return temp
     
     def get_logit_scale_param(self) -> torch.Tensor:
         """Получить сам параметр logit_scale (для логирования)"""
