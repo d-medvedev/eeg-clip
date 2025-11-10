@@ -299,10 +299,25 @@ class ProjectionHead(nn.Module):
         super().__init__()
         self.mlp = nn.Sequential(
             nn.Linear(in_dim, hidden_dim),
+            nn.LayerNorm(hidden_dim),  # Добавлен LayerNorm для стабильности
             nn.GELU(),
             nn.Dropout(dropout),
             nn.Linear(hidden_dim, out_dim)
         )
+        
+        # Улучшенная инициализация
+        self._init_weights()
+    
+    def _init_weights(self):
+        """Инициализация весов"""
+        for m in self.mlp.modules():
+            if isinstance(m, nn.Linear):
+                nn.init.kaiming_normal_(m.weight, mode='fan_out', nonlinearity='relu')
+                if m.bias is not None:
+                    nn.init.constant_(m.bias, 0)
+            elif isinstance(m, nn.LayerNorm):
+                nn.init.constant_(m.weight, 1)
+                nn.init.constant_(m.bias, 0)
     
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         """
