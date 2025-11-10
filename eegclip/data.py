@@ -258,21 +258,24 @@ class ThingsEEGDataset(Dataset):
                 if not image_files:
                     continue
                 
-                # Для каждого повторения EEG создаем пары со ВСЕМИ изображениями класса
-                # Это увеличивает данные в len(image_files) раз!
+                # ИСПРАВЛЕНИЕ: Используем только ОДНО изображение на класс
+                # Поскольку в данных нет информации о конкретном изображении, которое смотрел испытуемый,
+                # используем первое изображение класса (фиксированное для воспроизводимости)
+                # Это создает правильные пары для InfoNCE: одна запись ЭЭГ → одно изображение
+                selected_image = image_files[0]  # Первое изображение класса
+                
+                # Для каждого повторения EEG создаем пару с выбранным изображением
                 n_repetitions = eeg_data.shape[1]
                 for rep_idx in range(n_repetitions):
-                    for img_idx, image_file in enumerate(image_files):
-                        # Создаем образец для каждой комбинации (повторение, изображение)
-                        samples.append({
-                            'eeg_data': eeg_data[class_idx, rep_idx, :, :],  # [C, T]
-                            'image_path': image_file,
-                            'record_id': f"{subject_str}_class{class_idx}_rep{rep_idx}_img{img_idx}",
-                            'image_id': image_file.stem,
-                            'subject_id': subject_id,
-                            'class_idx': class_idx,
-                            'class_name': class_name
-                        })
+                    samples.append({
+                        'eeg_data': eeg_data[class_idx, rep_idx, :, :],  # [C, T]
+                        'image_path': selected_image,
+                        'record_id': f"{subject_str}_class{class_idx}_rep{rep_idx}",
+                        'image_id': selected_image.stem,
+                        'subject_id': subject_id,
+                        'class_idx': class_idx,
+                        'class_name': class_name
+                    })
         
         return samples
     
