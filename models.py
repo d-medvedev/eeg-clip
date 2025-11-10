@@ -291,6 +291,54 @@ class VisionEncoderWrapper(nn.Module):
         return x
 
 
+class FeatureEncoder(nn.Module):
+    """Энкодер для извлеченных признаков (метрик)"""
+    
+    def __init__(self, n_features: int, hidden_dims: list = [512, 256], 
+                 dropout: float = 0.1, output_dim: int = 512):
+        super().__init__()
+        
+        layers = []
+        in_dim = n_features
+        
+        for hidden_dim in hidden_dims:
+            layers.extend([
+                nn.Linear(in_dim, hidden_dim),
+                nn.LayerNorm(hidden_dim),
+                nn.GELU(),
+                nn.Dropout(dropout)
+            ])
+            in_dim = hidden_dim
+        
+        # Финальный слой
+        layers.append(nn.Linear(in_dim, output_dim))
+        
+        self.mlp = nn.Sequential(*layers)
+        self._init_weights()
+    
+    def _init_weights(self):
+        """Инициализация весов"""
+        for m in self.mlp.modules():
+            if isinstance(m, nn.Linear):
+                nn.init.kaiming_normal_(m.weight, mode='fan_out', nonlinearity='relu')
+                if m.bias is not None:
+                    nn.init.constant_(m.bias, 0)
+            elif isinstance(m, nn.LayerNorm):
+                nn.init.constant_(m.weight, 1)
+                nn.init.constant_(m.bias, 0)
+    
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        """
+        Args:
+            x: [B, n_features]
+        Returns:
+            [B, output_dim] - L2-нормированный эмбеддинг
+        """
+        x = self.mlp(x)
+        x = F.normalize(x, p=2, dim=1)
+        return x
+
+
 class ProjectionHead(nn.Module):
     """Проекционная голова MLP"""
     
@@ -344,6 +392,10 @@ class EEGCLIPModel(nn.Module):
         eeg_d_model: int = 256,
         eeg_layers: int = 4,
         eeg_hidden: int = 512,
+        # Feature encoder params (для метрик)
+        use_features: bool = False,
+        n_features: int = 155,  # 19 средних + 136 корреляций для 17 каналов
+        feature_hidden_dims: list = [512, 256],
         # Vision encoder params
         vision_encoder: str = 'openclip_vit_b32',
         freeze_vision: bool = True,
@@ -358,17 +410,28 @@ class EEGCLIPModel(nn.Module):
     ):
         super().__init__()
         
-        # EEG Encoder
-        self.eeg_encoder = EEGEncoder(
-            n_channels=n_channels,
-            n_timepoints=n_timepoints,
-            d_model=eeg_d_model,
-            n_layers=eeg_layers,
-            d_eeg=eeg_hidden,
-            proj_dim=proj_dim,
-            dropout=dropout,
-            temporal_pool=temporal_pool
-        )
+        self.use_features = use_features
+        
+        if use_features:
+            # Используем FeatureEncoder для метрик
+            self.eeg_encoder = FeatureEncoder(
+                n_features=n_features,
+                hidden_dims=feature_hidden_dims,
+                dropout=dropout,
+                output_dim=proj_dim
+            )
+        else:
+            # Используем EEGEncoder для сырых данных
+            self.eeg_encoder = EEGEncoder(
+                n_channels=n_channels,
+                n_timepoints=n_timepoints,
+                d_model=eeg_d_model,
+                n_layers=eeg_layers,
+                d_eeg=eeg_hidden,
+                proj_dim=proj_dim,
+                dropout=dropout,
+                temporal_pool=temporal_pool
+            )
         
         # Vision Encoder
         self.vision_encoder = VisionEncoderWrapper(vision_encoder, freeze=freeze_vision)
@@ -390,7 +453,7 @@ class EEGCLIPModel(nn.Module):
             self.register_buffer('logit_scale', torch.tensor(math.log(1 / init_temp)))
     
     def encode_eeg(self, eeg: torch.Tensor) -> torch.Tensor:
-        """Кодирование EEG"""
+        """Кодирование EEG (сырые данные или метрики)"""
         eeg_emb = self.eeg_encoder(eeg)
         eeg_emb = self.eeg_proj(eeg_emb)
         return eeg_emb
@@ -404,7 +467,7 @@ class EEGCLIPModel(nn.Module):
     def forward(self, eeg: torch.Tensor, image: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
         """
         Args:
-            eeg: [B, C, T]
+            eeg: [B, C, T] для сырых данных или [B, n_features] для метрик
             image: [B, 3, H, W]
         Returns:
             eeg_emb: [B, proj_dim]

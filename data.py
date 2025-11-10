@@ -162,13 +162,16 @@ class ThingsEEGDataset(Dataset):
         noise_std: float = 0.01,
         jitter_ms: float = 20.0,
         time_mask_prob: float = 0.2,
-        channel_drop_prob: float = 0.1
+        channel_drop_prob: float = 0.1,
+        use_features: bool = False  # Использовать извлеченные метрики вместо сырых данных
     ):
         self.data_root = Path(data_root)
         self.split = split
         self.eeg_len = eeg_len
         self.augment = augment
         self.preprocess_eeg = preprocess_eeg
+        self.use_features = use_features
+        self.fs = fs
         
         # Предобработка (только если включена)
         self.eeg_preprocessor = EEGPreprocessor(fs=fs, bandpass=bandpass, notch=notch) if preprocess_eeg else None
@@ -280,27 +283,36 @@ class ThingsEEGDataset(Dataset):
         sample = self.samples[idx]
         
         # EEG
-        eeg = sample['eeg_data'].astype(np.float32)  # [C, T]
+        eeg_raw = sample['eeg_data'].astype(np.float32)  # [C, T]
         
-        # Предобработка (только если включена, данные уже предобработаны)
-        if self.preprocess_eeg and self.eeg_preprocessor is not None:
-            eeg = self.eeg_preprocessor(eeg)
-        
-        # Обрезка до фиксированной длины (если нужно)
-        # НЕ используем паддинг, чтобы не терять информацию и не добавлять нули
-        if self.eeg_len:
-            C, T = eeg.shape
-            if T > self.eeg_len:
-                # Центрированная обрезка (если данные длиннее требуемого)
-                start = (T - self.eeg_len) // 2
-                eeg = eeg[:, start:start + self.eeg_len]
-            # Если T < eeg_len, оставляем данные как есть (не паддим нулями)
-        
-        # Аугментация (только на train)
-        if self.augment and self.eeg_augmenter:
-            eeg = self.eeg_augmenter(eeg)
-        
-        eeg = torch.from_numpy(eeg).float()
+        if self.use_features:
+            # Извлекаем метрики из ЭЭГ
+            from eegclip.features import extract_eeg_features
+            eeg = extract_eeg_features(eeg_raw, fs=self.fs)  # [n_features]
+            eeg = torch.from_numpy(eeg).float()
+        else:
+            # Используем сырые данные
+            eeg = eeg_raw
+            
+            # Предобработка (только если включена, данные уже предобработаны)
+            if self.preprocess_eeg and self.eeg_preprocessor is not None:
+                eeg = self.eeg_preprocessor(eeg)
+            
+            # Обрезка до фиксированной длины (если нужно)
+            # НЕ используем паддинг, чтобы не терять информацию и не добавлять нули
+            if self.eeg_len:
+                C, T = eeg.shape
+                if T > self.eeg_len:
+                    # Центрированная обрезка (если данные длиннее требуемого)
+                    start = (T - self.eeg_len) // 2
+                    eeg = eeg[:, start:start + self.eeg_len]
+                # Если T < eeg_len, оставляем данные как есть (не паддим нулями)
+            
+            # Аугментация (только на train)
+            if self.augment and self.eeg_augmenter:
+                eeg = self.eeg_augmenter(eeg)
+            
+            eeg = torch.from_numpy(eeg).float()
         
         # Изображение
         image = Image.open(sample['image_path']).convert('RGB')
