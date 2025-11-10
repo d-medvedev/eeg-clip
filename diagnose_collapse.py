@@ -56,7 +56,7 @@ def diagnose_collapse(checkpoint_path, data_root="data", n_classes=10, device_st
     ).to(device)
     
     # Загружаем чекпоинт
-    checkpoint = load_checkpoint(checkpoint_path, model, None, None, device)
+    checkpoint = load_checkpoint(checkpoint_path, model, None, None, None)
     model.eval()
     
     # Subject splits
