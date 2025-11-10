@@ -168,13 +168,14 @@ def check_embeddings(checkpoint_path=None, config_path=None, data_root="data", n
         print(f"   {key}: {value:.4f}")
     
     # Проверяем logit_scale
-    logit_scale = model.get_logit_scale()
+    logit_scale_param = model.get_logit_scale_param()  # Сам параметр
+    temperature = model.get_logit_scale()  # Температура (exp с клиппингом)
     print(f"\n🌡️  Logit scale (температура):")
-    print(f"   logit_scale: {logit_scale.item():.4f}")
-    print(f"   temperature: {logit_scale.exp().item():.4f}")
+    print(f"   logit_scale (параметр): {logit_scale_param.item():.4f}")
+    print(f"   temperature: {temperature.item():.4f}")
     
     # Проверяем, как температура влияет на сходство
-    scaled_similarity = logit_scale * similarity
+    scaled_similarity = temperature * similarity
     print(f"\n📊 Масштабированная матрица сходства (с температурой):")
     print(f"   Диагональ mean: {torch.diag(scaled_similarity).mean():.4f}")
     print(f"   Вне диагонали mean: {scaled_similarity[~torch.eye(scaled_similarity.shape[0], dtype=bool)].mean():.4f}")
