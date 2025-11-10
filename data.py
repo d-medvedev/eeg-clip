@@ -287,7 +287,11 @@ class ThingsEEGDataset(Dataset):
         
         if self.use_features:
             # Извлекаем метрики из ЭЭГ
-            from eegclip.features import extract_eeg_features
+            # Импорт здесь, чтобы избежать циклических зависимостей
+            try:
+                from .features import extract_eeg_features
+            except ImportError:
+                from eegclip.features import extract_eeg_features
             eeg = extract_eeg_features(eeg_raw, fs=self.fs)  # [n_features]
             eeg = torch.from_numpy(eeg).float()
         else:

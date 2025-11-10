@@ -20,6 +20,7 @@ from eegclip.data import ThingsEEGDataset, create_subject_splits, collate_fn
 from eegclip.losses import InfoNCELoss, AuxiliaryClassificationLoss
 from eegclip.metrics import compute_retrieval_metrics
 from eegclip.utils import set_seed, save_checkpoint, load_checkpoint, save_config, get_device, count_parameters
+from eegclip.features import extract_eeg_features
 
 
 def parse_args():
@@ -322,7 +323,6 @@ def main():
         if sample_eeg.dim() == 1:  # Уже метрики
             n_features = sample_eeg.shape[0]
         else:  # Сырые данные, нужно извлечь (не должно быть, но на всякий случай)
-            from eegclip.features import extract_eeg_features
             sample_eeg_np = sample_eeg.numpy()
             if sample_eeg_np.ndim == 2:  # [C, T]
                 features = extract_eeg_features(sample_eeg_np, fs=args.fs)
