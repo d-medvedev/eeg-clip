@@ -33,6 +33,7 @@ def parse_args():
     parser.add_argument('--preprocess_eeg', action='store_true', help='Enable EEG preprocessing (filtering, normalization). Data is already preprocessed by default.')
     parser.add_argument('--bandpass', type=float, nargs=2, default=[0.5, 45.0], help='Bandpass filter [low, high] (only if --preprocess_eeg)')
     parser.add_argument('--notch', type=float, default=None, help='Notch filter frequency (50 or 60) (only if --preprocess_eeg)')
+    parser.add_argument('--use_features', action='store_true', help='Use extracted features (metrics) instead of raw EEG data')
     
     # Augmentation
     parser.add_argument('--augment_eeg', action='store_true', help='Enable EEG augmentation')
@@ -59,7 +60,7 @@ def parse_args():
     parser.add_argument('--epochs', type=int, default=50, help='Number of epochs')
     parser.add_argument('--batch_size', type=int, default=128, help='Batch size')
     parser.add_argument('--num_workers', type=int, default=4, help='Number of data loader workers')
-    parser.add_argument('--lr', type=float, default=3e-4, help='Learning rate')
+    parser.add_argument('--lr', type=float, default=5e-4, help='Learning rate (default: 5e-4, more stable than 1e-3)')
     parser.add_argument('--wd', type=float, default=0.05, help='Weight decay')
     parser.add_argument('--warmup_ratio', type=float, default=0.05, help='Warmup ratio')
     parser.add_argument('--grad_clip', type=float, default=1.0, help='Gradient clipping')
@@ -122,38 +123,85 @@ def train_epoch(
             loss_fn = InfoNCELoss()
             loss = loss_fn(eeg_emb, img_emb, temperature)
         
+        # Проверка на nan/inf
+        if torch.isnan(loss) or torch.isinf(loss):
+            print(f"\n⚠️  WARNING: NaN/Inf loss detected at step {global_step}! Skipping batch.")
+            continue
+        
         # Backward
         if args.precision == 'amp':
             scaler.scale(loss).backward()
             scaler.unscale_(optimizer)
+            
+            # Проверка градиентов на nan/inf перед clipping
+            has_nan_grad = False
+            for param in model.parameters():
+                if param.grad is not None:
+                    if torch.isnan(param.grad).any() or torch.isinf(param.grad).any():
+                        has_nan_grad = True
+                        break
+            
+            if has_nan_grad:
+                print(f"\n⚠️  WARNING: NaN/Inf gradients detected at step {global_step}! Skipping batch.")
+                scaler.update()
+                optimizer.zero_grad()
+                continue
+            
             torch.nn.utils.clip_grad_norm_(model.parameters(), args.grad_clip)
             scaler.step(optimizer)
             scaler.update()
             
             # Ограничиваем параметр logit_scale после шага оптимизатора (для AMP)
             with torch.no_grad():
-                model.logit_scale.clamp_(max=math.log(100.0))
+                model.logit_scale.clamp_(min=math.log(1/100.0), max=math.log(100.0))
         else:
             loss.backward()
+            
+            # Проверка градиентов на nan/inf перед clipping
+            has_nan_grad = False
+            for param in model.parameters():
+                if param.grad is not None:
+                    if torch.isnan(param.grad).any() or torch.isinf(param.grad).any():
+                        has_nan_grad = True
+                        break
+            
+            if has_nan_grad:
+                print(f"\n⚠️  WARNING: NaN/Inf gradients detected at step {global_step}! Skipping batch.")
+                optimizer.zero_grad()
+                continue
+            
             torch.nn.utils.clip_grad_norm_(model.parameters(), args.grad_clip)
             optimizer.step()
         
         # Ограничиваем параметр logit_scale после шага оптимизатора
         # Это предотвращает неконтролируемый рост температуры
         with torch.no_grad():
-            model.logit_scale.clamp_(max=math.log(100.0))
+            model.logit_scale.clamp_(min=math.log(1/100.0), max=math.log(100.0))
         
         total_loss += loss.item()
         n_batches += 1
         
         # Логирование
         logit_scale_param = model.get_logit_scale_param()  # Сам параметр для логирования
-        if global_step % args.log_every == 0:
-            writer.add_scalar('train/loss', loss.item(), global_step)
-            writer.add_scalar('train/logit_scale_param', logit_scale_param.item(), global_step)
-            writer.add_scalar('train/temperature', temperature.item(), global_step)
         
-        pbar.set_postfix({'loss': f"{loss.item():.4f}", 'temp': f"{temperature.item():.2f}", 'log_scale': f"{logit_scale_param.item():.2f}"})
+        # Безопасное логирование (проверка на nan)
+        loss_val = loss.item()
+        temp_val = temperature.item()
+        log_scale_val = logit_scale_param.item()
+        
+        if global_step % args.log_every == 0:
+            if not (math.isnan(loss_val) or math.isinf(loss_val)):
+                writer.add_scalar('train/loss', loss_val, global_step)
+            if not (math.isnan(log_scale_val) or math.isinf(log_scale_val)):
+                writer.add_scalar('train/logit_scale_param', log_scale_val, global_step)
+            if not (math.isnan(temp_val) or math.isinf(temp_val)):
+                writer.add_scalar('train/temperature', temp_val, global_step)
+        
+        # Безопасный вывод в progress bar
+        loss_str = f"{loss_val:.4f}" if not (math.isnan(loss_val) or math.isinf(loss_val)) else "nan"
+        temp_str = f"{temp_val:.2f}" if not (math.isnan(temp_val) or math.isinf(temp_val)) else "nan"
+        log_scale_str = f"{log_scale_val:.2f}" if not (math.isnan(log_scale_val) or math.isinf(log_scale_val)) else "nan"
+        pbar.set_postfix({'loss': loss_str, 'temp': temp_str, 'log_scale': log_scale_str})
         global_step += 1
     
     avg_loss = total_loss / n_batches
@@ -247,7 +295,8 @@ def main():
         noise_std=args.noise_std,
         jitter_ms=args.jitter_ms,
         time_mask_prob=args.time_mask_prob,
-        channel_drop_prob=args.channel_drop_prob
+        channel_drop_prob=args.channel_drop_prob,
+        use_features=args.use_features
     )
     
     val_dataset = ThingsEEGDataset(
@@ -260,8 +309,25 @@ def main():
         preprocess_eeg=args.preprocess_eeg,  # По умолчанию False - данные уже предобработаны
         bandpass=tuple(args.bandpass),
         notch=args.notch,
-        augment=False
+        augment=False,
+        use_features=args.use_features
     )
+    
+    # Вычисляем n_features, если используем метрики
+    n_features = None
+    if args.use_features:
+        # Извлекаем метрики из одного образца для определения размера
+        sample = train_dataset[0]
+        sample_eeg = sample['eeg']
+        if sample_eeg.dim() == 1:  # Уже метрики
+            n_features = sample_eeg.shape[0]
+        else:  # Сырые данные, нужно извлечь (не должно быть, но на всякий случай)
+            from eegclip.features import extract_eeg_features
+            sample_eeg_np = sample_eeg.numpy()
+            if sample_eeg_np.ndim == 2:  # [C, T]
+                features = extract_eeg_features(sample_eeg_np, fs=args.fs)
+                n_features = len(features)
+        print(f"📊 Размерность признаков: {n_features}")
     
     train_loader = DataLoader(
         train_dataset,
@@ -288,6 +354,9 @@ def main():
         eeg_d_model=args.eeg_d_model,
         eeg_layers=args.eeg_layers,
         eeg_hidden=args.eeg_hidden,
+        use_features=args.use_features,
+        n_features=n_features if args.use_features else 155,  # Дефолт для 17 каналов: 19 + 136
+        feature_hidden_dims=[512, 256],
         vision_encoder=args.vision_encoder,
         freeze_vision=args.freeze_vision,
         proj_dim=args.proj_dim,
