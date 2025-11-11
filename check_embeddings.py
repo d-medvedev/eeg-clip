@@ -201,7 +201,7 @@ def check_embeddings(checkpoint_path=None, config_path=None, data_root="data", n
     print(f"   temperature: {temperature.item():.4f}")
     
     # Проверяем, как температура влияет на сходство
-    scaled_similarity = temperature * similarity
+    scaled_similarity = temperature * similarity.to(device)
     print(f"\n📊 Масштабированная матрица сходства (с температурой):")
     print(f"   Диагональ mean: {torch.diag(scaled_similarity).mean():.4f}")
     print(f"   Вне диагонали mean: {scaled_similarity[~torch.eye(scaled_similarity.shape[0], dtype=bool)].mean():.4f}")
