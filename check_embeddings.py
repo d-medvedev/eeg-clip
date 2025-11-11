@@ -36,6 +36,8 @@ def check_embeddings(checkpoint_path=None, config_path=None, data_root="data", n
     
     # Параметры модели из конфига или дефолтные
     if config:
+        use_features = config.get('use_features', False)
+        n_features = config.get('n_features', 155)  # 19 средних + 136 корреляций для 17 каналов
         eeg_d_model = config.get('eeg_d_model', 256)
         eeg_layers = config.get('eeg_layers', 4)
         eeg_hidden = config.get('eeg_hidden', 512)
@@ -46,6 +48,8 @@ def check_embeddings(checkpoint_path=None, config_path=None, data_root="data", n
         dropout = config.get('dropout', 0.1)
         temporal_pool = config.get('temporal_pool', 'cls')
     else:
+        use_features = False
+        n_features = 155
         eeg_d_model = 256
         eeg_layers = 4
         eeg_hidden = 512
@@ -74,7 +78,8 @@ def check_embeddings(checkpoint_path=None, config_path=None, data_root="data", n
         eeg_len=100,
         fs=500.0,
         preprocess_eeg=False,
-        augment=False
+        augment=False,
+        use_features=use_features
     )
     
     val_loader = DataLoader(
@@ -89,6 +94,8 @@ def check_embeddings(checkpoint_path=None, config_path=None, data_root="data", n
     model = EEGCLIPModel(
         n_channels=17,
         n_timepoints=100,
+        use_features=use_features,
+        n_features=n_features,
         eeg_d_model=eeg_d_model,
         eeg_layers=eeg_layers,
         eeg_hidden=eeg_hidden,
