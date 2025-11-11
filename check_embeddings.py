@@ -29,10 +29,12 @@ def check_embeddings(checkpoint_path=None, config_path=None, data_root="data", n
     config = None
     if checkpoint_path and Path(checkpoint_path).exists():
         config_dir = Path(checkpoint_path).parent
-        config_path = config_dir / "config.json"
-        if config_path.exists():
-            config = load_config(config_path)
-            print(f"✅ Загружена конфигурация: {config_path}")
+        config_path_file = config_dir / "config.json"
+        if config_path_file.exists():
+            config = load_config(config_path_file)
+            print(f"✅ Загружена конфигурация: {config_path_file}")
+            print(f"   use_features: {config.get('use_features', False)}")
+            print(f"   n_features: {config.get('n_features', 'N/A')}")
     
     # Параметры модели из конфига или дефолтные
     if config:
