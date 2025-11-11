@@ -117,19 +117,37 @@ def check_embeddings(checkpoint_path=None, config_path=None, data_root="data", n
     
     model.eval()
     
-    # Получаем один батч
-    batch = next(iter(val_loader))
-    eeg = batch['eeg'].to(device)
-    image = batch['image'].to(device)
+    # Получаем все данные из валидационного датасета
+    all_eeg_emb = []
+    all_img_emb = []
+    all_class_indices = []
     
-    print(f"\n📊 Батч:")
-    print(f"   EEG shape: {eeg.shape}")
-    print(f"   Image shape: {image.shape}")
-    print(f"   Class indices: {batch['class_idx'].tolist()}")
-    
-    # Получаем эмбеддинги
+    print(f"\n📊 Загрузка всех данных из валидационного датасета...")
     with torch.no_grad():
-        eeg_emb, img_emb = model(eeg, image)
+        for batch in val_loader:
+            eeg = batch['eeg'].to(device)
+            image = batch['image'].to(device)
+            eeg_emb, img_emb = model(eeg, image)
+            all_eeg_emb.append(eeg_emb.cpu())
+            all_img_emb.append(img_emb.cpu())
+            all_class_indices.extend(batch['class_idx'].tolist())
+    
+    # Объединяем все эмбеддинги
+    eeg_emb = torch.cat(all_eeg_emb, dim=0)
+    img_emb = torch.cat(all_img_emb, dim=0)
+    
+    print(f"   Всего образцов: {eeg_emb.shape[0]}")
+    print(f"   Уникальных классов: {len(set(all_class_indices))}")
+    
+    # Для анализа берем один батч
+    batch = next(iter(val_loader))
+    eeg_sample = batch['eeg'].to(device)
+    image_sample = batch['image'].to(device)
+    
+    print(f"\n📊 Пример батча:")
+    print(f"   EEG shape: {eeg_sample.shape}")
+    print(f"   Image shape: {image_sample.shape}")
+    print(f"   Class indices: {batch['class_idx'].tolist()}")
     
     print(f"\n📊 Эмбеддинги:")
     print(f"   EEG embeddings shape: {eeg_emb.shape}")
@@ -167,8 +185,9 @@ def check_embeddings(checkpoint_path=None, config_path=None, data_root="data", n
     else:
         print("   ❌ ПРОБЛЕМА: Правильные пары НЕ имеют большего сходства!")
     
-    # Вычисляем метрики
-    metrics = compute_retrieval_metrics(eeg_emb, img_emb, k_list=[1, 5, 10])
+    # Вычисляем метрики на всех данных
+    print(f"\n📊 Анализ на всех {eeg_emb.shape[0]} образцах:")
+    metrics = compute_retrieval_metrics(eeg_emb.to(device), img_emb.to(device), k_list=[1, 5, 10])
     
     print(f"\n📈 Метрики retrieval:")
     for key, value in metrics.items():
