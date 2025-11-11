@@ -170,12 +170,13 @@ def check_embeddings(checkpoint_path=None, config_path=None, data_root="data", n
     print(f"   Диагональ (правильные пары): {torch.diag(similarity).tolist()}")
     print(f"   Диагональ mean: {torch.diag(similarity).mean():.4f}")
     print(f"   Диагональ std: {torch.diag(similarity).std():.4f}")
-    print(f"   Вне диагонали mean: {similarity[~torch.eye(similarity.shape[0], dtype=bool)].mean():.4f}")
-    print(f"   Вне диагонали std: {similarity[~torch.eye(similarity.shape[0], dtype=bool)].std():.4f}")
+    eye_mask = torch.eye(similarity.shape[0], dtype=bool, device=device)
+    print(f"   Вне диагонали mean: {similarity[~eye_mask].mean():.4f}")
+    print(f"   Вне диагонали std: {similarity[~eye_mask].std():.4f}")
     
     # Проверяем, правильно ли модель различает пары
     diag_similarity = torch.diag(similarity)
-    off_diag_mean = similarity[~torch.eye(similarity.shape[0], dtype=bool)].mean()
+    off_diag_mean = similarity[~eye_mask].mean()
     
     print(f"\n🔍 Анализ различимости:")
     print(f"   Среднее сходство правильных пар: {diag_similarity.mean():.4f}")
@@ -206,7 +207,7 @@ def check_embeddings(checkpoint_path=None, config_path=None, data_root="data", n
     scaled_similarity = temperature * similarity
     print(f"\n📊 Масштабированная матрица сходства (с температурой):")
     print(f"   Диагональ mean: {torch.diag(scaled_similarity).mean():.4f}")
-    print(f"   Вне диагонали mean: {scaled_similarity[~torch.eye(scaled_similarity.shape[0], dtype=bool)].mean():.4f}")
+    print(f"   Вне диагонали mean: {scaled_similarity[~eye_mask].mean():.4f}")
     
     # Проверяем предсказания
     pred_eeg2img = similarity.argmax(dim=1)
