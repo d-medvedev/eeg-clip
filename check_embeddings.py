@@ -161,8 +161,10 @@ def check_embeddings(checkpoint_path=None, config_path=None, data_root="data", n
     print(f"   EEG norms: min={eeg_norms.min():.4f}, max={eeg_norms.max():.4f}, mean={eeg_norms.mean():.4f}")
     print(f"   Image norms: min={img_norms.min():.4f}, max={img_norms.max():.4f}, mean={img_norms.mean():.4f}")
     
-    # Матрица сходства
-    similarity = eeg_emb @ img_emb.T
+    # Матрица сходства (перемещаем на устройство для вычислений)
+    eeg_emb_device = eeg_emb.to(device)
+    img_emb_device = img_emb.to(device)
+    similarity = eeg_emb_device @ img_emb_device.T
     print(f"\n📊 Матрица сходства:")
     print(f"   Shape: {similarity.shape}")
     print(f"   Диагональ (правильные пары): {torch.diag(similarity).tolist()}")
@@ -201,7 +203,7 @@ def check_embeddings(checkpoint_path=None, config_path=None, data_root="data", n
     print(f"   temperature: {temperature.item():.4f}")
     
     # Проверяем, как температура влияет на сходство
-    scaled_similarity = temperature * similarity.to(device)
+    scaled_similarity = temperature * similarity
     print(f"\n📊 Масштабированная матрица сходства (с температурой):")
     print(f"   Диагональ mean: {torch.diag(scaled_similarity).mean():.4f}")
     print(f"   Вне диагонали mean: {scaled_similarity[~torch.eye(scaled_similarity.shape[0], dtype=bool)].mean():.4f}")
